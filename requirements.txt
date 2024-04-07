@@ -1,0 +1,9 @@
+# This file may be used to create an environment using:
+# $ conda create --name <env> --file <this file>
+# platform: osx-64
+empyrical==0.5.5
+numpy==1.26.4
+pandas==2.2.1
+plotly==5.20.0
+requests==2.31.0
+streamlit==1.32.2
