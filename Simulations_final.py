@@ -19,7 +19,7 @@ st.set_page_config(layout="wide")
 
 
 # fonctions rebalancement
-def rebal_portef(prix, weight, frais_sous_jacent=None, frais_contrat=0, freq=12, seuil=None):
+def rebal_portef(prix, weight, frais_sous_jacent=None, frais_uc=0.0, prelevement_sociaux_euro=0.0, freq=12, seuil=None):
     # Inititalisation des variables
     weight_new = pd.DataFrame(columns=prix.columns, index=prix.index)
     portfolio_value = pd.Series(index=prix.index)
@@ -28,55 +28,28 @@ def rebal_portef(prix, weight, frais_sous_jacent=None, frais_contrat=0, freq=12,
     rebalance.iloc[:] = 0
     weight_new.iloc[0] = weight
     portfolio_value.iloc[0] = 100
-    if frais_sous_jacent == None:
-        rdt = prix.pct_change().fillna(0)
-    else:
-        rdt = prix.pct_change().fillna(0) - [frais / 12 for frais in frais_sous_jacent]
+    rdt = prix.pct_change().fillna(0)
+    rdt['Fonds Euro - Monceau'] = rdt['Fonds Euro - Monceau']*(1-prelevement_sociaux_euro) # Intégration des prélèvements coiaux sur le contrats en €
+    rdt.loc[:, rdt.columns != 'Fonds Euro - Monceau'] = rdt.loc[:, rdt.columns != 'Fonds Euro - Monceau'] - frais_uc/12 # Intégration des FG sur les UC
+
     # Calcul des pondérations
     for i, months in enumerate(prix.index):
         if i == 0:
             pass
         else:
             if seuil is None:
-                portfolio_value.iloc[i] = (
-                    1
-                    + (weight_new.iloc[i - 1] * rdt.iloc[i]).sum()
-                    - frais_contrat / 12
-                ) * portfolio_value.iloc[i - 1]
-                portfolio_rdt = (
-                    portfolio_value.iloc[i] / portfolio_value.iloc[i - 1] - 1
-                )
+                portfolio_value.iloc[i] = (1+ (weight_new.iloc[i - 1] * rdt.iloc[i]).sum()) * portfolio_value.iloc[i - 1]
+                portfolio_rdt = (portfolio_value.iloc[i] / portfolio_value.iloc[i - 1] - 1)
                 if prix.index.month[i] % freq != 0:
-                    weight_new.iloc[i] = (
-                        (1 + rdt.iloc[i]) / (1 + portfolio_rdt)
-                    ) * weight_new.iloc[i - 1]
+                    weight_new.iloc[i] = ((1 + rdt.iloc[i]) / (1 + portfolio_rdt)) * weight_new.iloc[i - 1]
                 else:
                     rebalance.iloc[i] = 1.0
                     weight_new.iloc[i] = weight
             else:
-                portfolio_value.iloc[i] = (
-                    1
-                    + (weight_new.iloc[i - 1] * rdt.iloc[i]).sum()
-                    - frais_contrat / 12
-                ) * portfolio_value.iloc[i - 1]
-                portfolio_rdt = (
-                    portfolio_value.iloc[i] / portfolio_value.iloc[i - 1] - 1
-                )
-                if (
-                    100
-                    * np.max(
-                        np.abs(
-                            weight_new.iloc[i - 1].rename("Poids")
-                            - pd.DataFrame.from_dict(
-                                weight, orient="index", columns=["Poids"]
-                            ).T
-                        )
-                    )
-                    < seuil
-                ):
-                    weight_new.iloc[i] = (
-                        (1 + rdt.iloc[i]) / (1 + portfolio_rdt)
-                    ) * weight_new.iloc[i - 1]
+                portfolio_value.iloc[i] = (1+ (weight_new.iloc[i - 1] * rdt.iloc[i]).sum()) * portfolio_value.iloc[i - 1]
+                portfolio_rdt = (portfolio_value.iloc[i] / portfolio_value.iloc[i - 1] - 1                )
+                if (100* np.max(np.abs(weight_new.iloc[i - 1].rename("Poids")- pd.DataFrame.from_dict(weight, orient="index", columns=["Poids"]).T))< seuil):
+                    weight_new.iloc[i] = ((1 + rdt.iloc[i]) / (1 + portfolio_rdt)) * weight_new.iloc[i - 1]
                 else:
                     rebalance.iloc[i] = 1.0
                     weight_new.iloc[i] = weight
@@ -166,6 +139,7 @@ with tab1:
         )
     st.plotly_chart(fig, use_container_width=True)
 
+    st.divider()
     lag = 12 * (
         st.number_input("**Période glissante**", min_value=1, max_value=10, value=3)
     )
@@ -280,7 +254,8 @@ with tab1:
         .set_axis(["Performance annuelle", "Volatilité", "Sharpe (taux sans risque 1.2%)", "Max DD"])
         .T
     )
-    cols[0].write("**Statistiques globales depuis 2000**")
+
+    st.write("**Statistiques globales depuis 2000**")
     cols[0].dataframe(stat
                 .style
                 .format(precision=2),
@@ -298,6 +273,7 @@ with tab1:
     cols[1].plotly_chart(fig, 
                          use_container_width=True)
 
+    st.divider()
     st.write('**Statistiques Performances annualisées sur 8 ans glissants**')
     stat = (
         prix
@@ -315,6 +291,7 @@ with tab1:
                  use_container_width=True)
 
     # Corrélation
+    st.divider()
     corr = (
         prix[
             [
@@ -357,144 +334,144 @@ with tab2:
     if np.abs(total_weight - 1) >= 0.01:
         st.warning(f"**Attention : La somme des poids de la stratégie n'est pas égale à 100%. Elle est de {round(100*total_weight,2)}%**")
         
+    if st.button('Calcul des stratégies', key='lancement_calcul_rebal'):
+        # Calcul des stat sur différentes stratégie de rabalancement
+        data1 = rebal_portef(prix, weight=portfolio, freq=1)  # rebal mensuel
+        data2 = rebal_portef(prix, weight=portfolio, freq=3)  # rebal trimestriel
+        data3 = rebal_portef(prix, weight=portfolio, freq=6)  # rebal semestriel
+        data4 = rebal_portef(prix, weight=portfolio, freq=12)  # rebal annuel
+        data5 = rebal_portef(prix, weight=portfolio, freq=13)  # pas de rebal
+        data6 = rebal_portef(prix, weight=portfolio, seuil=1.0)  # rebal si seuil>1%
+        data7 = rebal_portef(prix, weight=portfolio, seuil=2.0)  # rebal si seuil>2.0%
+        data8 = rebal_portef(prix, weight=portfolio, seuil=3.0)  # rebal si seuil>3.0%
 
-    # Calcul des stat sur différentes stratégie de rabalancement
-    data1 = rebal_portef(prix, weight=portfolio, freq=1)  # rebal mensuel
-    data2 = rebal_portef(prix, weight=portfolio, freq=3)  # rebal trimestriel
-    data3 = rebal_portef(prix, weight=portfolio, freq=6)  # rebal semestriel
-    data4 = rebal_portef(prix, weight=portfolio, freq=12)  # rebal annuel
-    data5 = rebal_portef(prix, weight=portfolio, freq=13)  # pas de rebal
-    data6 = rebal_portef(prix, weight=portfolio, seuil=1.0)  # rebal si seuil>1%
-    data7 = rebal_portef(prix, weight=portfolio, seuil=2.0)  # rebal si seuil>2.0%
-    data8 = rebal_portef(prix, weight=portfolio, seuil=3.0)  # rebal si seuil>3.0%
+        lag = 12 * (st.number_input("**Période glissante**", min_value=1, max_value=10, value=3, key="lag"))
 
-    lag = 12 * (st.number_input("**Période glissante**", min_value=1, max_value=10, value=3, key="lag"))
-
-    fig = px.line(
-        pd.concat(
-            [
-                data1["Perf_strat"].rename("Reb. mensuel"),
-                data2["Perf_strat"].rename("Reb. trimestriel"),
-                data3["Perf_strat"].rename("Reb. semestriel"),
-                data4["Perf_strat"].rename("Reb. annuel"),
-                data5["Perf_strat"].rename("Pas de reb."),
-                data6["Perf_strat"].rename("Seuil 1%"),
-                data7["Perf_strat"].rename("Seuil 2%"),
-                data8["Perf_strat"].rename("Seuil 3%"),
-            ],
-            axis=1,
-        ),
-        title=f"Performance cumulée selon méthode de rebalancement",
-    )
-    fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
-    fig.update_layout(
-        legend=dict(
-            orientation="h",
-            y=-0.5,
-            x=0,
-            yanchor="bottom",)
+        fig = px.line(
+            pd.concat(
+                [
+                    data1["Perf_strat"].rename("Reb. mensuel"),
+                    data2["Perf_strat"].rename("Reb. trimestriel"),
+                    data3["Perf_strat"].rename("Reb. semestriel"),
+                    data4["Perf_strat"].rename("Reb. annuel"),
+                    data5["Perf_strat"].rename("Pas de reb."),
+                    data6["Perf_strat"].rename("Seuil 1%"),
+                    data7["Perf_strat"].rename("Seuil 2%"),
+                    data8["Perf_strat"].rename("Seuil 3%"),
+                ],
+                axis=1,
+            ),
+            title=f"Performance cumulée selon méthode de rebalancement",
         )
-    
+        fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                y=-0.5,
+                x=0,
+                yanchor="bottom",)
+            )
+        
 
-    cols = st.columns(2)
-    cols[0].plotly_chart(fig, use_container_width=True)
-    
-    fig = px.line(
-        pd.concat(
-            [
-                data1["Perf_strat"].rename("Reb. mensuel"),
-                data2["Perf_strat"].rename("Reb. trimestriel"),
-                data3["Perf_strat"].rename("Reb. semestriel"),
-                data4["Perf_strat"].rename("Reb. annuel"),
-                data5["Perf_strat"].rename("Pas de reb."),
-                data6["Perf_strat"].rename("Seuil 1%"),
-                data7["Perf_strat"].rename("Seuil 2%"),
-                data8["Perf_strat"].rename("Seuil 3%"),
-            ],
-            axis=1,
+        cols = st.columns(2)
+        cols[0].plotly_chart(fig, use_container_width=True)
+        
+        fig = px.line(
+            pd.concat(
+                [
+                    data1["Perf_strat"].rename("Reb. mensuel"),
+                    data2["Perf_strat"].rename("Reb. trimestriel"),
+                    data3["Perf_strat"].rename("Reb. semestriel"),
+                    data4["Perf_strat"].rename("Reb. annuel"),
+                    data5["Perf_strat"].rename("Pas de reb."),
+                    data6["Perf_strat"].rename("Seuil 1%"),
+                    data7["Perf_strat"].rename("Seuil 2%"),
+                    data8["Perf_strat"].rename("Seuil 3%"),
+                ],
+                axis=1,
+            )
+            .rolling(lag)
+            .apply(lambda x: 100*cagr(x.pct_change(), period="monthly"))
+            .dropna(),
+            title=f"Performance anuelle moyenne {int(lag/12)} ans selon méthode de rebalancement",
         )
-        .rolling(lag)
-        .apply(lambda x: 100*cagr(x.pct_change(), period="monthly"))
-        .dropna(),
-        title=f"Performance anuelle moyenne {int(lag/12)} ans selon méthode de rebalancement",
-    )
-    fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
-    fig.update_layout(
-        legend=dict(
-            orientation="h",
-            y=-0.5,
-            x=0,
-            yanchor="bottom",
+        fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                y=-0.5,
+                x=0,
+                yanchor="bottom",
+            )
         )
-    )
 
-    cols[1].plotly_chart(fig, use_container_width=True)
+        cols[1].plotly_chart(fig, use_container_width=True)
 
-    st.write("**Nombre de rabalancement par an :**")
-    rebalct = (
-        pd.concat(
-            [
-                data1["rebalance"].rename("Reb. mensuel"),
-                data2["rebalance"].rename("Reb. trimestriel"),
-                data3["rebalance"].rename("Reb. semestriel"),
-                data4["rebalance"].rename("Reb. annuel"),
-                data5["rebalance"].rename("Pas de reb."),
-                data6["rebalance"].rename("Seuil 1%"),
-                data7["rebalance"].rename("Seuil 2%"),
-                data8["rebalance"].rename("Seuil 3%"),
-            ],
-            axis=1,
+        st.write("**Nombre de rabalancement par an :**")
+        rebalct = (
+            pd.concat(
+                [
+                    data1["rebalance"].rename("Reb. mensuel"),
+                    data2["rebalance"].rename("Reb. trimestriel"),
+                    data3["rebalance"].rename("Reb. semestriel"),
+                    data4["rebalance"].rename("Reb. annuel"),
+                    data5["rebalance"].rename("Pas de reb."),
+                    data6["rebalance"].rename("Seuil 1%"),
+                    data7["rebalance"].rename("Seuil 2%"),
+                    data8["rebalance"].rename("Seuil 3%"),
+                ],
+                axis=1,
+            )
+            .resample("YE")
+            .sum()
+            .loc["2001":]
         )
-        .resample("YE")
-        .sum()
-        .loc["2001":]
-    )
-    rebalct.index = rebalct.index.strftime("%Y")
-    st.dataframe(rebalct, use_container_width=True)
+        rebalct.index = rebalct.index.strftime("%Y")
+        st.dataframe(rebalct, use_container_width=True)
 
-    perf_rebal = (
-        pd.concat(
-            [
-                data1["Perf_strat"].rename("Reb. mensuel"),
-                data2["Perf_strat"].rename("Reb. trimestriel"),
-                data3["Perf_strat"].rename("Reb. semestriel"),
-                data4["Perf_strat"].rename("Reb. annuel"),
-                data5["Perf_strat"].rename("Pas de reb."),
-                data6["Perf_strat"].rename("Seuil 1%"),
-                data7["Perf_strat"].rename("Seuil 2%"),
-                data8["Perf_strat"].rename("Seuil 3%"),
-            ],
-            axis=1,
+        perf_rebal = (
+            pd.concat(
+                [
+                    data1["Perf_strat"].rename("Reb. mensuel"),
+                    data2["Perf_strat"].rename("Reb. trimestriel"),
+                    data3["Perf_strat"].rename("Reb. semestriel"),
+                    data4["Perf_strat"].rename("Reb. annuel"),
+                    data5["Perf_strat"].rename("Pas de reb."),
+                    data6["Perf_strat"].rename("Seuil 1%"),
+                    data7["Perf_strat"].rename("Seuil 2%"),
+                    data8["Perf_strat"].rename("Seuil 3%"),
+                ],
+                axis=1,
+            )
+            .agg(
+                [
+                    lambda x: 100 * cagr(x.pct_change(), period="monthly"),
+                    lambda x: 100 * annual_volatility(x.pct_change(), period="monthly"),
+                    lambda x: 100 * max_drawdown(x.pct_change()),
+                    lambda x: 100 * value_at_risk(x.pct_change().dropna(), cutoff=0.05),
+                    lambda x: sharpe_ratio(x.pct_change().dropna(), period='monthly', risk_free=1.26/12/100)
+                ]
+            )
+            .set_axis(["Perf annuel moyenne", "Volat", "Max DD", "VaR 95%", 'Sharpe (taux sans risque 1.2%)'])
+            .T
         )
-        .agg(
-            [
-                lambda x: 100 * cagr(x.pct_change(), period="monthly"),
-                lambda x: 100 * annual_volatility(x.pct_change(), period="monthly"),
-                lambda x: 100 * max_drawdown(x.pct_change()),
-                lambda x: 100 * value_at_risk(x.pct_change().dropna(), cutoff=0.05),
-                lambda x: sharpe_ratio(x.pct_change().dropna(), period='monthly', risk_free=1.26/12/100)
-            ]
-        )
-        .set_axis(["Perf annuel moyenne", "Volat", "Max DD", "VaR 95%", 'Sharpe (taux sans risque 1.2%)'])
-        .T
-    )
 
-    st.write("**Performance selon rebalancement**")
-    st.dataframe(
-        perf_rebal
-        .style
-        .format(precision=2)
-        .highlight_max(color="red")
-        .highlight_min(color="yellow")
-        .highlight_max(subset=["Perf annuel moyenne", 'Sharpe (taux sans risque 1.2%)'], color="yellow")
-        .highlight_min(subset=["Perf annuel moyenne", 'Sharpe (taux sans risque 1.2%)'], color="red"),
-        use_container_width=True,
-    )
+        st.write("**Performance selon rebalancement**")
+        st.dataframe(
+            perf_rebal
+            .style
+            .format(precision=2)
+            .highlight_max(color="red")
+            .highlight_min(color="yellow")
+            .highlight_max(subset=["Perf annuel moyenne", 'Sharpe (taux sans risque 1.2%)'], color="yellow")
+            .highlight_min(subset=["Perf annuel moyenne", 'Sharpe (taux sans risque 1.2%)'], color="red"),
+            use_container_width=True,
+        )
 
 # code tab 3 : comparaison de stratégie
 with tab3:
     st.subheader("Stratégies :")
-    cols = st.columns(3)
+    cols = st.columns(5)
     num_portfolios = cols[0].number_input("**Nombre de portefeuilles**", min_value=1, step=1, value=1)
     choix = cols[1].selectbox("**Méthode pour rebalancer le portefeuille:**",
                               ["Mensuel", "Trimestriel", "Semestriel", "Annuel", "Jamais"],
@@ -505,164 +482,201 @@ with tab3:
                                    min_value=1,
                                    max_value=10,
                                    step=1)
+    prelevement_sociaux_euro = cols[3].number_input("Prélèvements sociaux sur le contrat en € (en %)", 
+                                                    min_value=0.0, 
+                                                    max_value=100.0, 
+                                                    value=17.2)/100
+    frais_uc = cols[4].number_input("Frais sur les UC (en %)", 
+                                    min_value=0.0, 
+                                    max_value=20.0,
+                                    value=0.57)/100
 
-    portfolios = []
-    cols = st.columns(8)
-    for i in range(num_portfolios):
-        portfolio = {}
-        for j, asset in enumerate(prix.iloc[:, [2, 5, 1, 6, 7, 4, 0, 3]].columns):
-            asset_weight = (
-                cols[j].number_input(
-                    f"{asset[:15]} (%)",
-                    min_value=0.,
-                    step=5.,
-                    value=12.5,
-                    key=f"portef{i}{j}",)/100
-                )
-            portfolio[asset] = asset_weight
+    methode = st.radio("**Méthode d'entrée des portefeuilles**", 
+                       ["Pondérations de chaque classe d'actifs", 'Profil'], 
+                       index=0,
+                       horizontal=True)
+    
 
-        total_weight = sum(portfolio.values())
-        state = "OK" if abs(total_weight - 1) <= 0.001 else "Non OK"
-        portfolio["État"] = state
-        portfolio["total_weight"] = total_weight
-        portfolios.append(portfolio)
+    if methode=="Pondérations de chaque classe d'actifs":
+        st.write("**Entrée l'allocation de chaque stratégie:**")
+        portfolios = []
+        cols = st.columns(8)
+        for i in range(num_portfolios):
+            portfolio = {}
+            for j, asset in enumerate(prix.iloc[:, [2, 5, 1, 6, 7, 4, 0, 3]].columns):
+                asset_weight = (
+                    cols[j].number_input(
+                        f"{asset[:15]} (%)",
+                        min_value=0.,
+                        step=5.,
+                        value=12.5,
+                        key=f"portef{i}{j}",)/100
+                    )
+                portfolio[asset] = asset_weight
+
+            total_weight = sum(portfolio.values())
+            if np.abs(total_weight - 1) >= 0.01:            
+                st.warning(f"**Attention : La somme des poids de la stratégie {i+1} n'est pas égale à 100%. Elle est de {100*round(total_weight,2)}%**")
+            portfolios.append(portfolio)
+    else:
+        portfolios = []
+        st.write("**Entrée le profil type:**")
+        cols = st.columns(7)
+        asset_weight = {}
+        for j, asset in enumerate(prix.iloc[:, [2, 1, 6, 7, 4, 0, 3]].columns):
+            asset_weight[asset] = (cols[j].number_input(f"{asset[:20]} (%)",
+                                                 min_value=0.,
+                                                 step=5.,
+                                                 value=100/7,
+                                                 key=f"profil{j}",)/100
+                            )
+        if sum(asset_weight.values())!=1: 
+            st.warning(f"**La somme des poids du profil doit être égale à 100%. Elle est de {100*round(sum(asset_weight.values()),2)}%**")
+
+        st.divider()
+        st.write("**Poids du contrat en Euros dans chaque stratégie**")
+        cols = st.columns(num_portfolios)
+        for i in range(num_portfolios):
+            portfolio = {}
+            asset_weight_euro = (cols[i].number_input("Poids du contrat en € (%)",
+                                                      min_value=0.,
+                                                      step=5.,
+                                                      value=50.0,
+                                                      key=f"portef{i}{j}",)/100
+                            )
+            portfolio['Fonds Euro - Monceau'] = asset_weight_euro
+            for asset in prix.iloc[:, [2, 1, 6, 7, 4, 0, 3]].columns: 
+                portfolio[asset] = asset_weight[asset]*(1-asset_weight_euro)
+
+            portfolios.append(portfolio)        
 
 
-    for i, portfolio in enumerate(portfolios):
-        if np.abs(portfolio["total_weight"] - 1) >= 0.01:            
-            total_weight = 100*portfolio["total_weight"]
-            st.warning(f"**Attention : La somme des poids de la stratégie {i+1} n'est pas égale à 100%. Elle est de {round(total_weight,2)}%**"
+    if st.button('Calcul des stratégies', ):
+        perf = [rebal_portef(prix, weight=weigth, freq=rebal[choix], prelevement_sociaux_euro=prelevement_sociaux_euro, frais_uc=frais_uc)["Perf_strat"] for weigth in portfolios]
+        perf = pd.DataFrame(perf, index=["stratégie " + str(i+1) for i in range(len(perf))]).T
+
+        cols = st.columns(2)
+        # Calcul de la perf cumulée
+        fig = px.line(perf, title="Performanes cumulées")
+        fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                y=-0.5,
+                x=0,
+                yanchor="bottom",
             )
-    perf = [
-        rebal_portef(prix, weight=weigth, freq=rebal[choix])["Perf_strat"]
-        for weigth in portfolios
-        ]
-
-    perf = pd.DataFrame(perf, index=["stratégie " + str(i+1) for i in range(len(perf))]).T
-
-    cols = st.columns(2)
-
-    # Calcul de la perf cumulée
-    fig = px.line(perf, title="Performanes cumulées")
-    fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
-    fig.update_layout(
-        legend=dict(
-            orientation="h",
-            y=-0.5,
-            x=0,
-            yanchor="bottom",
         )
-    )
-    cols[0].plotly_chart(fig, use_container_width=True)
+        cols[0].plotly_chart(fig, use_container_width=True)
 
-    # Calcul de la perf annuelle moyenne
-    fig = px.line(
-        perf.rolling(12 * periode)
-        .apply(lambda x: 100 * cagr(x.pct_change(), period="monthly"))
-        .dropna(),
-        title=f"Performance annuelle sur {periode} années",
-    )
-    fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
-    fig.update_layout(
-        legend=dict(
-            orientation="h",
-            y=-0.5,
-            x=0,
-            yanchor="bottom",
+        # Calcul de la perf annuelle moyenne
+        fig = px.line(
+            perf.rolling(12 * periode)
+            .apply(lambda x: 100 * cagr(x.pct_change(), period="monthly"))
+            .dropna(),
+            title=f"Performance annuelle sur {periode} années",
         )
-    )
-    cols[1].plotly_chart(fig, use_container_width=True)
+        fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                y=-0.5,
+                x=0,
+                yanchor="bottom",
+            )
+        )
+        cols[1].plotly_chart(fig, use_container_width=True)
 
-    # Calcul de volatilié
-    fig = px.line(
-        perf.rolling(12 * periode)
-        .apply(lambda x: 100 * annual_volatility(x.pct_change(), period="monthly"))
-        .dropna(),
-        title=f"Volatilité annuelle {periode} années",
-    )
-    fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
-    fig.update_layout(
-        legend=dict(
-            orientation="h",
-            y=-0.5,
-            x=0,
-            yanchor="bottom",
+        # Calcul de volatilié
+        fig = px.line(
+            perf.rolling(12 * periode)
+            .apply(lambda x: 100 * annual_volatility(x.pct_change(), period="monthly"))
+            .dropna(),
+            title=f"Volatilité annuelle {periode} années",
         )
-    )
-    fig.add_hline(
-        y=2,
-        line_dash="dot",
-        annotation_text="SRRI 3",
-        annotation_font_color="red",
-        line_color="red",
-        line_width=3,
-        annotation_position="top right",
-    )
-    fig.add_hline(
-        y=5,
-        line_dash="dot",
-        annotation_text="SRRI 4",
-        line_color="red",
-        line_width=3,
-        annotation_font_color="red",
-        annotation_position="top right",
-    )
-    fig.add_hline(
-        y=10,
-        line_dash="dot",
-        annotation_text="SRRI 5",
-        line_color="red",
-        line_width=3,
-        annotation_font_color="red",
-        annotation_position="top right",
-    )
-    fig.add_hline(
-        y=15,
-        line_dash="dot",
-        annotation_text="SRRI 6",
-        line_color="red",
-        line_width=3,
-        annotation_font_color="red",
-        annotation_position="top right",
-    )
-    cols[0].plotly_chart(fig, use_container_width=True)
+        fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                y=-0.5,
+                x=0,
+                yanchor="bottom",
+            )
+        )
+        fig.add_hline(
+            y=2,
+            line_dash="dot",
+            annotation_text="SRRI 3",
+            annotation_font_color="red",
+            line_color="red",
+            line_width=3,
+            annotation_position="top right",
+        )
+        fig.add_hline(
+            y=5,
+            line_dash="dot",
+            annotation_text="SRRI 4",
+            line_color="red",
+            line_width=3,
+            annotation_font_color="red",
+            annotation_position="top right",
+        )
+        fig.add_hline(
+            y=10,
+            line_dash="dot",
+            annotation_text="SRRI 5",
+            line_color="red",
+            line_width=3,
+            annotation_font_color="red",
+            annotation_position="top right",
+        )
+        fig.add_hline(
+            y=15,
+            line_dash="dot",
+            annotation_text="SRRI 6",
+            line_color="red",
+            line_width=3,
+            annotation_font_color="red",
+            annotation_position="top right",
+        )
+        cols[0].plotly_chart(fig, use_container_width=True)
 
-    # Calcul Sharpe
-    fig = px.line(
-        perf.rolling(12 * periode)
-        .apply(lambda x: sharpe_ratio(x.pct_change(), period="monthly"))
-        .dropna(),
-        title=f"Ratio de Sharpe {periode} années",
-    )
-    fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
-    fig.update_layout(
-        legend=dict(
-            orientation="h",
-            y=-0.5,
-            x=0,
-            yanchor="bottom",
+        # Calcul Sharpe
+        fig = px.line(
+            perf.rolling(12 * periode)
+            .apply(lambda x: sharpe_ratio(x.pct_change(), period="monthly"))
+            .dropna(),
+            title=f"Ratio de Sharpe {periode} années",
         )
-    )
-    cols[1].plotly_chart(fig, use_container_width=True)
+        fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                y=-0.5,
+                x=0,
+                yanchor="bottom",
+            )
+        )
+        cols[1].plotly_chart(fig, use_container_width=True)
 
-    # Tableau de synthèse
-    st.write("**Statistiques des stratégies**")
-    st.dataframe(
-        perf.pct_change()
-        .agg(
-            [
-                lambda x: 100 * cagr(x, period="monthly"),
-                lambda x: 100 * annual_volatility(x, period="monthly"),
-                lambda x: sharpe_ratio(x, period="monthly", risk_free=1.26/12/100),
-                lambda x: 100 * max_drawdown(x),
-                lambda x: 100*value_at_risk(x.dropna(), cutoff=0.05)
-            ])
-        .set_axis(["Perf annuelle moyenne", "Volatilité moyenne", "Sharpe (taux sans risque 1.2%)", "Max DD", "VaR 95%"])
-        .T
-        .style
-        .format(precision=2),
-        use_container_width=True,
-        )
+        # Tableau de synthèse
+        st.write("**Statistiques des stratégies**")
+        st.dataframe(
+            perf.pct_change()
+            .agg(
+                [
+                    lambda x: 100 * cagr(x, period="monthly"),
+                    lambda x: 100 * annual_volatility(x, period="monthly"),
+                    lambda x: sharpe_ratio(x, period="monthly", risk_free=1.26/12/100),
+                    lambda x: 100 * max_drawdown(x),
+                    lambda x: 100*value_at_risk(x.dropna(), cutoff=0.05)
+                ])
+            .set_axis(["Perf annuelle moyenne", "Volatilité moyenne", "Sharpe (taux sans risque 1.2%)", "Max DD", "VaR 95%"])
+            .T
+            .style
+            .format(precision=2),
+            use_container_width=True,
+            )
 
 with tab4:
     st.subheader("**Entrée des pondérations :**")
@@ -712,7 +726,7 @@ with tab4:
                 period_invest=12,
                 period_max=12 * periode,)[0].rename("Programme 1 an"),
             strat_investisst(
-                data4["Perf_strat"],
+                data["Perf_strat"],
                 prix["Fonds Euro - Monceau"],
                 period_invest=24,
                 period_max=12 * periode,)[0].rename("Programme 2 ans"),
