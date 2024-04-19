@@ -525,10 +525,10 @@ with tab3:
         asset_weight = {}
         for j, asset in enumerate(prix.iloc[:, [2, 1, 6, 7, 4, 0, 3]].columns):
             asset_weight[asset] = (cols[j].number_input(f"{asset[:20]} (%)",
-                                                 min_value=0.,
-                                                 step=5.,
-                                                 value=100/7,
-                                                 key=f"profil{j}",)/100
+                                                        min_value=0.,
+                                                        step=5.,
+                                                        value=100/7,
+                                                        key=f"profil{j}",)/100
                             )
         if np.abs(sum(asset_weight.values())-1) >= 0.01: 
             st.warning(f"**La somme des poids du profil doit être égale à 100%. Elle est de {100*round(sum(asset_weight.values()),2)}%**")
@@ -538,6 +538,7 @@ with tab3:
         cols = st.columns(num_portfolios)
         for i in range(num_portfolios):
             portfolio = {}
+            cols[i].write(f"**Stratégie {i+1}**")
             asset_weight_euro = (cols[i].number_input("Poids du contrat en € (%)",
                                                       min_value=0.,
                                                       step=5.,
