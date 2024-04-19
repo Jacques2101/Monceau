@@ -530,7 +530,7 @@ with tab3:
                                                  value=100/7,
                                                  key=f"profil{j}",)/100
                             )
-        if sum(asset_weight.values())!=1: 
+        if np.abs(sum(asset_weight.values())-1) >= 0.01: 
             st.warning(f"**La somme des poids du profil doit être égale à 100%. Elle est de {100*round(sum(asset_weight.values()),2)}%**")
 
         st.divider()
