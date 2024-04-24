@@ -114,7 +114,7 @@ prix = lire_data()
 rebal = {"Mensuel": 1, "Trimestriel": 3, "Semestriel": 6, "Annuel": 12, "Jamais": 13}
 
 # Création des différents onglets
-tab1, tab2, tab3, tab4 = st.tabs(
+tab1, tab2, tab3, tab4= st.tabs(
     [
         "Comparaisons des indices",
         "Comparaison méthode de rebalancement",
@@ -471,7 +471,7 @@ with tab2:
 # code tab 3 : comparaison de stratégie
 with tab3:
     st.subheader("Stratégies :")
-    cols = st.columns(5)
+    cols = st.columns(6)
     num_portfolios = cols[0].number_input("**Nombre de portefeuilles**", min_value=1, step=1, value=1)
     choix = cols[1].selectbox("**Méthode pour rebalancer le portefeuille:**",
                               ["Mensuel", "Trimestriel", "Semestriel", "Annuel", "Jamais"],
@@ -482,14 +482,20 @@ with tab3:
                                    min_value=1,
                                    max_value=10,
                                    step=1)
-    prelevement_sociaux_euro = cols[3].number_input("Prélèvements sociaux sur le contrat en € (en %)", 
+    prelevement_sociaux_euro = cols[3].number_input("**Prélèvements sociaux contrat en € (en %)**", 
                                                     min_value=0.0, 
                                                     max_value=100.0, 
                                                     value=17.2)/100
-    frais_uc = cols[4].number_input("Frais sur les UC (en %)", 
+    frais_uc = cols[4].number_input("**Frais sur les UC (en %)**", 
                                     min_value=0.0, 
                                     max_value=20.0,
-                                    value=0.57)/100
+                                    value=0.75)/100
+    seuil = cols[5].number_input("**Seuil (en %)**", 
+                                 value=5, 
+                                 min_value=0, 
+                                 max_value=100, 
+                                 step=5, 
+                                 key="seuil")/100
 
     methode = st.radio("**Méthode d'entrée des portefeuilles**", 
                        ["Pondérations de chaque classe d'actifs", 'Profil'], 
@@ -549,13 +555,22 @@ with tab3:
             for asset in prix.iloc[:, [2, 1, 6, 7, 4, 0, 3]].columns: 
                 portfolio[asset] = asset_weight[asset]*(1-asset_weight_euro)
 
-            portfolios.append(portfolio)        
+            portfolios.append(portfolio)
+
+        st.write(f"**Allocation des {num_portfolios} stratégies**")
+        st.dataframe(pd.DataFrame(portfolios, 
+                                  index=[f'Strategie {i+1}' for i in np.arange(len(portfolios))])
+                     .replace(0,np.nan)
+                     .dropna(axis=1,how="all")
+                     .style
+                     .format('{:.2%}'),
+                     use_container_width=True, 
+                     ) 
 
 
     if st.button('Calcul des stratégies', ):
         perf = [rebal_portef(prix, weight=weigth, freq=rebal[choix], prelevement_sociaux_euro=prelevement_sociaux_euro, frais_uc=frais_uc)["Perf_strat"] for weigth in portfolios]
-        perf = pd.DataFrame(perf, index=["stratégie " + str(i+1) for i in range(len(perf))]).T
-
+        perf = pd.DataFrame(perf, index=["stratégie " + str(i+1) for i in range(len(perf))]).T 
         cols = st.columns(2)
         # Calcul de la perf cumulée
         fig = px.line(perf, title="Performanes cumulées")
@@ -590,10 +605,10 @@ with tab3:
 
         # Calcul de volatilié
         fig = px.line(
-            perf.rolling(12 * periode)
+            perf.rolling(12 * 5)
             .apply(lambda x: 100 * annual_volatility(x.pct_change(), period="monthly"))
             .dropna(),
-            title=f"Volatilité annuelle {periode} années",
+            title=f"Volatilité annuelle 5 ans",
         )
         fig.update_layout(yaxis_title=None, xaxis_title=None, legend_title=None)
         fig.update_layout(
@@ -660,6 +675,40 @@ with tab3:
         )
         cols[1].plotly_chart(fig, use_container_width=True)
 
+        date = ['1 an', '2 ans', '3 ans', '4 ans', '5 ans', '6 ans', '7 ans', '8 ans', '9 ans', '10 ans', '11 ans', '12 ans']
+        cone_perf_inf = [perf.rolling(lag).apply(lambda x: 100*cagr(x.pct_change(), period='monthly')).dropna().apply(lambda x: np.percentile(x, seuil*100))
+                      for lag in np.arange(12, 12*(12+1), step=12)]
+        cone_perf_inf = pd.DataFrame(cone_perf_inf)
+        cone_perf_inf.index = date
+        fig = px.line(cone_perf_inf, 
+                      title=f"VaR à {100*seuil}% selon les stratégies")
+        fig.update_traces(mode="markers+lines", hovertemplate="%{y:.2f}%")
+        fig.update_layout(hovermode="x unified")
+        fig.add_hline(
+            y=0,
+            line_dash="dot",   
+            line_color="green",
+            line_width=3
+            )
+        cols[0].plotly_chart(fig, use_container_width=True)
+
+        cone_perf_sup = [perf.rolling(lag).apply(lambda x: 100*cagr(x.pct_change(), period='monthly')).dropna().apply(lambda x: np.percentile(x, 100-seuil*100))
+                      for lag in np.arange(12, 12*(12+1), step=12)]
+        cone_perf_sup = pd.DataFrame(cone_perf_sup)
+        cone_perf_sup.index = date
+        fig = px.line(cone_perf_sup, 
+                      title=f"VaR à {100*(1-seuil)}% selon les stratégies")
+        fig.update_traces(mode="markers+lines", hovertemplate="%{y:.2f}%")
+        fig.update_layout(hovermode="x unified")
+        fig.add_hline(
+            y=0,
+            line_dash="dot",   
+            line_color="green",
+            line_width=3
+            )
+        cols[1].plotly_chart(fig, use_container_width=True)
+        
+
         # Tableau de synthèse
         st.write("**Statistiques des stratégies**")
         st.dataframe(
@@ -672,7 +721,7 @@ with tab3:
                     lambda x: 100 * max_drawdown(x),
                     lambda x: 100*value_at_risk(x.dropna(), cutoff=0.05)
                 ])
-            .set_axis(["Perf annuelle moyenne", "Volatilité moyenne", "Sharpe (taux sans risque 1.2%)", "Max DD", "VaR 95%"])
+            .set_axis(["Perf annuelle moyenne", "Volatilité moyenne", "Sharpe (taux sans risque 1.2%)", "Max DD", "VaR 95% 1 mois"])
             .T
             .style
             .format(precision=2),
@@ -781,5 +830,3 @@ with tab4:
         )
     )
     cols[1].plotly_chart(fig, use_container_width=True)
-
-    
