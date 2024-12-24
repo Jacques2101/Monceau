@@ -3,4 +3,4 @@
 # platform: osx-64
 streamlit==1.24.1
 pandas==2.2.3
-sqlalchemy==2.0.35
+# sqlalchemy==2.0.35
